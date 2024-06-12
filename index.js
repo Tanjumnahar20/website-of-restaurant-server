@@ -235,19 +235,95 @@ console.log(process.env.res_USER);
     app.post('/payment', async(req,res)=>{
       const payment = req.body;
       const paymentResult = await paymentCollection.insertOne(payment);
-      console.log('payemnet', payment);
+      // console.log('payment data = ', payment);
       
       // carefully delete each item to the card
-     const query = {_id: {
-      $in: payment. menuItemId.map( id =>new ObjectId(id))
-     }}
+    //  const query = {_id: {
+    //   $in: payment. menuItemId.map( id =>new ObjectId(id))
+    //  }}
 
+    const query = { menuId: { $in: payment.menuItemId } };
      const deleteResult = await cartCollection.deleteMany(query)
-
       res.send({paymentResult,deleteResult})
-
+    })
+  
+    // paymeny history
+    app.get('/payment/:email', verifyToken, async(req,res)=>{
+      const query ={email: req.params.email}
+      if(req.params.email !== req.decoded.email){
+        return res.status(401).send({message:'forbidden access'})
+      }
+      const result = await paymentCollection.find(query).toArray();
+      res.send(result);
     })
 
+    // stat/analytics(SHOW HOW MANY ORDER PLACED & TOTAL PAYMENT BY USERS, TOTAL USERS)
+
+    app.get('/admin-stats', async(req,res)=>{
+      const user = await userCollection.estimatedDocumentCount();
+      const menuItem = await menuCollection.estimatedDocumentCount();
+      const orders = await paymentCollection.estimatedDocumentCount();
+      // calculate revenue
+      // const payments = await paymentCollection.find().toArray();
+      // const revenue = payments.reduce((total,payment)=>total+payment.price,0)
+
+      // BETTER WAY TO REVENUE
+      const result = await paymentCollection.aggregate([
+        {
+          $group:{
+            _id: null,
+             totalRevenue:{
+              $sum: '$price'
+             }
+          }
+        }
+      ]).toArray();
+
+      const revenue= result.length>0 ? result[0].totalRevenue : 0;
+
+      res.send({
+        user,
+        menuItem,
+        orders,
+        revenue
+        
+      })
+    })
+
+    // order stat (show chart of product selling rate & highest sell product, link up between two collection)
+    app.get('/order-stat',  async(req,res)=>{
+      const result = await paymentCollection.aggregate([
+         
+          {
+            $lookup:{
+              from:'menu',
+              localField:'menuItemId',
+              foreignField:'_id',
+              as:'menuItems'
+            }
+          },
+          {
+            $unwind:'$menuItems'
+          },
+          {
+            $group:{
+              _id: '$menuItems.category',
+               quantity:{$sum:1},
+               revenue:{$sum: '$menuItems.price'}
+            }
+          },
+          // this pipeline for key name change 
+          {
+            $project:{
+              _id:0,
+              category: '$_id',
+              quantity:'$quantity',
+              revenue:"$revenue"
+            }
+          }
+      ]).toArray();
+      res.send(result)
+    })
 
   
 
